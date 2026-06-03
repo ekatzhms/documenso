@@ -46,7 +46,7 @@ const NON_AUTO_SIGNABLE_ACTION_AUTH_TYPES: string[] = [
 //
 // Reasoning: If there aren't that many fields, it's likely going to be easier to manually sign each one
 // while for larger documents with many fields it will be beneficial to sign away the boilerplate fields.
-const AUTO_SIGN_THRESHOLD = 5;
+const AUTO_SIGN_THRESHOLD = Number.MAX_SAFE_INTEGER;
 
 export type DocumentSigningAutoSignProps = {
   recipient: Pick<Recipient, 'id' | 'token'>;

@@ -1,3 +1,21 @@
+// PATCHED VERSION — forces manual initials entry per field.
+// Drop-in replacement for:
+//   apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx
+//
+// What changed vs. upstream:
+//   - `onSign` no longer auto-fills with extractInitials(fullName). Instead it
+//     opens a modal that requires the signer to type their initials manually.
+//   - The actual signFieldWithToken call only fires after the signer confirms
+//     the dialog with a non-empty value.
+//   - `extractInitials(fullName)` is kept only as a placeholder hint in the input
+//     so the signer can see what their derived initials would have been.
+//
+// Compliance rationale: auto-typed initials don't satisfy our "actively initialed
+// each field" requirement. Each field must be manually initialed.
+//
+// This is a fork-local patch — reapply on upstream merges.
+import { useState } from 'react';
+
 import { msg } from '@lingui/core/macro';
 import { useLingui } from '@lingui/react';
 import { Trans } from '@lingui/react/macro';
@@ -14,6 +32,16 @@ import type {
   TRemovedSignedFieldWithTokenMutationSchema,
   TSignFieldWithTokenMutationSchema,
 } from '@documenso/trpc/server/field-router/schema';
+import { Button } from '@documenso/ui/primitives/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@documenso/ui/primitives/dialog';
+import { Input } from '@documenso/ui/primitives/input';
+import { Label } from '@documenso/ui/primitives/label';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
 import { DocumentSigningFieldContainer } from './document-signing-field-container';
@@ -43,7 +71,8 @@ export const DocumentSigningInitialsField = ({
   const { fullName } = useRequiredDocumentSigningContext();
   const { recipient, isAssistantMode } = useDocumentSigningRecipientContext();
 
-  const initials = extractInitials(fullName);
+  // Kept only as a hint/placeholder — NOT used as the signed value.
+  const derivedInitialsHint = extractInitials(fullName);
 
   const { mutateAsync: signFieldWithToken, isPending: isSignFieldWithTokenLoading } =
     trpc.field.signFieldWithToken.useMutation(DO_NOT_INVALIDATE_QUERY_ON_MUTATION);
@@ -58,26 +87,42 @@ export const DocumentSigningInitialsField = ({
   const safeFieldMeta = ZInitialsFieldMeta.safeParse(field.fieldMeta);
   const parsedFieldMeta = safeFieldMeta.success ? safeFieldMeta.data : null;
 
-  const onSign = async (authOptions?: TRecipientActionAuth) => {
-    try {
-      const value = initials ?? '';
+  // Manual-initials prompt state
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [typedInitials, setTypedInitials] = useState('');
+  const [pendingAuthOptions, setPendingAuthOptions] = useState<TRecipientActionAuth | undefined>(
+    undefined,
+  );
 
+  // PATCH: instead of immediately signing with derived initials, open the prompt.
+  const onSign = (authOptions?: TRecipientActionAuth) => {
+    setPendingAuthOptions(authOptions);
+    setTypedInitials('');
+    setPromptOpen(true);
+  };
+
+  const onConfirmInitials = async () => {
+    const value = typedInitials.trim();
+    if (!value) return;
+
+    try {
       const payload: TSignFieldWithTokenMutationSchema = {
         token: recipient.token,
         fieldId: field.id,
         value,
         isBase64: false,
-        authOptions,
+        authOptions: pendingAuthOptions,
       };
 
       if (onSignField) {
         await onSignField(payload);
-        return;
+      } else {
+        await signFieldWithToken(payload);
+        await revalidate();
       }
 
-      await signFieldWithToken(payload);
-
-      await revalidate();
+      setPromptOpen(false);
+      setTypedInitials('');
     } catch (err) {
       const error = AppError.parseError(err);
 
@@ -110,7 +155,6 @@ export const DocumentSigningInitialsField = ({
       }
 
       await removeSignedFieldWithToken(payload);
-
       await revalidate();
     } catch (err) {
       console.error(err);
@@ -124,25 +168,81 @@ export const DocumentSigningInitialsField = ({
   };
 
   return (
-    <DocumentSigningFieldContainer
-      field={field}
-      onSign={onSign}
-      onRemove={onRemove}
-      type="Initials"
-    >
-      {isLoading && <DocumentSigningFieldsLoader />}
+    <>
+      <DocumentSigningFieldContainer
+        field={field}
+        onSign={onSign}
+        onRemove={onRemove}
+        type="Initials"
+      >
+        {isLoading && <DocumentSigningFieldsLoader />}
 
-      {!field.inserted && (
-        <DocumentSigningFieldsUninserted>
-          <Trans>Initials</Trans>
-        </DocumentSigningFieldsUninserted>
-      )}
+        {!field.inserted && (
+          <DocumentSigningFieldsUninserted>
+            <Trans>Initials</Trans>
+          </DocumentSigningFieldsUninserted>
+        )}
 
-      {field.inserted && (
-        <DocumentSigningFieldsInserted textAlign={parsedFieldMeta?.textAlign}>
-          {field.customText}
-        </DocumentSigningFieldsInserted>
-      )}
-    </DocumentSigningFieldContainer>
+        {field.inserted && (
+          <DocumentSigningFieldsInserted textAlign={parsedFieldMeta?.textAlign}>
+            {field.customText}
+          </DocumentSigningFieldsInserted>
+        )}
+      </DocumentSigningFieldContainer>
+
+      <Dialog open={promptOpen} onOpenChange={setPromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              <Trans>Enter your initials</Trans>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="manual-initials-input">
+              <Trans>
+                Please type your initials for this field. Each initials field must be entered
+                individually.
+              </Trans>
+            </Label>
+            <Input
+              id="manual-initials-input"
+              value={typedInitials}
+              onChange={(e) => setTypedInitials(e.target.value)}
+              maxLength={6}
+              autoFocus
+              placeholder={derivedInitialsHint || 'AB'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && typedInitials.trim()) {
+                  e.preventDefault();
+                  void onConfirmInitials();
+                }
+              }}
+            />
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setPromptOpen(false);
+                setTypedInitials('');
+              }}
+            >
+              <Trans>Cancel</Trans>
+            </Button>
+            <Button
+              type="button"
+              onClick={onConfirmInitials}
+              disabled={!typedInitials.trim() || isLoading}
+              loading={isLoading}
+            >
+              <Trans>Confirm</Trans>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };

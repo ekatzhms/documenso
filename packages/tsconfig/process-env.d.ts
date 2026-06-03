@@ -16,6 +16,7 @@ declare namespace NodeJS {
     NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY: string;
 
     NEXT_PRIVATE_LOGGER_FILE_PATH?: string;
+    NEXT_PRIVATE_LOGGER_LEVEL?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent';
 
     NEXT_PRIVATE_STRIPE_API_KEY: string;
     NEXT_PRIVATE_STRIPE_WEBHOOK_SECRET: string;

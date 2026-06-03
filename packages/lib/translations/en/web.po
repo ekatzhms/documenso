@@ -1951,6 +1951,7 @@ msgstr "Can prepare"
 #: apps/remix/app/components/general/document-signing/document-signing-reject-dialog.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-number-field.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-name-field.tsx
+#: apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-form.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-form.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-complete-dialog.tsx
@@ -2350,6 +2351,7 @@ msgstr "Configure the team roles for each group"
 msgid "Configure the team roles for each member"
 msgstr "Configure the team roles for each member"
 
+#: apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx
 #: apps/remix/app/components/dialogs/template-direct-link-dialog.tsx
 #: apps/remix/app/components/dialogs/public-profile-template-manage-dialog.tsx
 msgid "Confirm"
@@ -3986,6 +3988,10 @@ msgstr "Enter your email"
 #: apps/remix/app/components/general/direct-template/direct-template-configure-form.tsx
 msgid "Enter your email address to receive the completed document."
 msgstr "Enter your email address to receive the completed document."
+
+#: apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx
+msgid "Enter your initials"
+msgstr "Enter your initials"
 
 #: apps/remix/app/components/general/claim-account.tsx
 #: apps/remix/app/components/general/document-signing/document-signing-complete-dialog.tsx
@@ -6270,6 +6276,10 @@ msgstr "Please type {0} to confirm"
 #: apps/remix/app/components/dialogs/account-delete-dialog.tsx
 msgid "Please type <0>{0}</0> to confirm."
 msgstr "Please type <0>{0}</0> to confirm."
+
+#: apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx
+msgid "Please type your initials for this field. Each initials field must be entered individually."
+msgstr "Please type your initials for this field. Each initials field must be entered individually."
 
 #: apps/remix/app/components/general/envelope-editor/envelope-editor-preview-page.tsx
 #: apps/remix/app/components/general/envelope-editor/envelope-editor-fields-page.tsx
