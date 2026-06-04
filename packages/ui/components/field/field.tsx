@@ -112,10 +112,20 @@ export function FieldRootContainer({
         data-inserted={field.inserted ? 'true' : 'false'}
         data-readonly={readonly ? 'true' : 'false'}
         className={cn(
-          'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center rounded-[2px] bg-white/90 ring-2 ring-gray-200 transition-all',
+          'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center rounded-[2px] bg-white/90 ring-gray-200 transition-all',
           color?.base,
           {
-            'px-2': field.type !== FieldType.SIGNATURE && field.type !== FieldType.FREE_SIGNATURE,
+            // Initials fields are small; use width-relative padding (percentages
+            // resolve against the px-sized field wrapper, unlike cqw which would
+            // resolve against the viewport because the box is portaled out of any
+            // container-query ancestor) and a thinner ring so the box does not
+            // overflow the underline on scaled-down (e.g. mobile) PDFs.
+            'px-[4%] ring-1': field.type === FieldType.INITIALS,
+            'px-2':
+              field.type !== FieldType.INITIALS &&
+              field.type !== FieldType.SIGNATURE &&
+              field.type !== FieldType.FREE_SIGNATURE,
+            'ring-2': field.type !== FieldType.INITIALS,
             'justify-center': !field.inserted,
             'ring-orange-300': isValidating && isFieldUnsignedAndRequired(field),
           },

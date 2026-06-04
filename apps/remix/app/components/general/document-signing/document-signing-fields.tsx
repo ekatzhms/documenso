@@ -10,9 +10,31 @@ export const DocumentSigningFieldsLoader = () => {
   );
 };
 
-export const DocumentSigningFieldsUninserted = ({ children }: { children: React.ReactNode }) => {
+type DocumentSigningFieldsUninsertedProps = {
+  children: React.ReactNode;
+
+  /**
+   * The text alignment of the placeholder.
+   *
+   * Defaults to left so existing fields are unchanged.
+   */
+  textAlign?: 'left' | 'center' | 'right';
+};
+
+export const DocumentSigningFieldsUninserted = ({
+  children,
+  textAlign = 'left',
+}: DocumentSigningFieldsUninsertedProps) => {
   return (
-    <p className="text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.425rem,25cqw,0.825rem)] duration-200">
+    <p
+      className={cn(
+        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+        {
+          '!text-center': textAlign === 'center',
+          '!text-right': textAlign === 'right',
+        },
+      )}
+    >
       {children}
     </p>
   );

@@ -178,7 +178,7 @@ export const DocumentSigningInitialsField = ({
         {isLoading && <DocumentSigningFieldsLoader />}
 
         {!field.inserted && (
-          <DocumentSigningFieldsUninserted>
+          <DocumentSigningFieldsUninserted textAlign={parsedFieldMeta?.textAlign}>
             <Trans>Initials</Trans>
           </DocumentSigningFieldsUninserted>
         )}
