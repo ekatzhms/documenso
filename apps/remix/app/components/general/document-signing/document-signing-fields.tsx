@@ -28,7 +28,7 @@ export const DocumentSigningFieldsUninserted = ({
   return (
     <p
       className={cn(
-        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.4rem,16cqw,0.7rem)] leading-tight duration-200',
         {
           '!text-center': textAlign === 'center',
           '!text-right': textAlign === 'right',
@@ -59,7 +59,16 @@ export const DocumentSigningFieldsInserted = ({
     <div className="flex h-full w-full items-center overflow-hidden">
       <p
         className={cn(
-          'text-foreground w-full whitespace-pre-wrap text-left text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+          // whitespace-nowrap so values like "06/04/2026 10:18 PM" don't wrap at
+          // a space and get clipped by the field's height on narrow mobile fields.
+          //
+          // Font sizing is split by viewport:
+          //   - mobile (default):  clamp(0.35rem, 12cqw, 0.7rem)  — smaller cap
+          //     so long values still fit horizontally on narrow field widths.
+          //   - desktop (md:+):    clamp(0.5rem,  20cqw, 1rem)    — larger cap
+          //     so short values like initials remain readable on desktop fields.
+          'text-foreground w-full overflow-hidden whitespace-nowrap text-left leading-tight duration-200',
+          'text-[clamp(0.35rem,12cqw,0.6rem)] md:text-[clamp(0.5rem,20cqw,1.1rem)]',
           {
             '!text-center': textAlign === 'center',
             '!text-right': textAlign === 'right',
