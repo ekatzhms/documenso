@@ -25,6 +25,7 @@ import {
 } from '../../types/field-meta';
 import type { RequestMetadata } from '../../universal/extract-request-metadata';
 import { createDocumentAuditLogData } from '../../utils/document-audit-logs';
+import { logger } from '../../utils/logger';
 import { validateFieldAuth } from '../document/validate-field-auth';
 
 export type SignFieldWithTokenOptions = {
@@ -116,7 +117,16 @@ export const signFieldWithToken = async ({
   }
 
   if (field.inserted) {
-    throw new Error(`Field ${fieldId} has already been inserted`);
+    // Idempotency: treat as a successful no-op rather than a 5xx error.
+    // This endpoint frequently sees client retries (tRPC/SWR retry on transient
+    // failures, remounts, navigation, etc.) — once a field is inserted the work
+    // is done, so returning the existing field is the safe response.
+    // Logged at warn level so we can still spot pathological retry loops.
+    logger.warn(
+      { fieldId, recipientId: recipient.id, type: field.type },
+      `signFieldWithToken called on already-inserted field ${fieldId} — returning existing field (idempotent no-op)`,
+    );
+    return field;
   }
 
   // Unreachable code based on the above query but we need to satisfy TypeScript
