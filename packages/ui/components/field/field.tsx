@@ -112,7 +112,12 @@ export function FieldRootContainer({
         data-inserted={field.inserted ? 'true' : 'false'}
         data-readonly={readonly ? 'true' : 'false'}
         className={cn(
-          'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center rounded-[2px] bg-white/90 ring-gray-200 transition-all',
+          // [container-type:inline-size] makes cqw-based text sizing inside the
+          // field (e.g. DocumentSigningFieldsInserted) resolve against the field's
+          // actual rendered width rather than the viewport. The [container-type:size]
+          // on the wrapper in DocumentSigningFieldContainer does not survive the
+          // FieldContainerPortal, so we re-establish a query container here.
+          'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center overflow-hidden rounded-[2px] bg-white/90 ring-gray-200 transition-all [container-type:inline-size]',
           color?.base,
           {
             // Initials fields are small; use width-relative padding (percentages
