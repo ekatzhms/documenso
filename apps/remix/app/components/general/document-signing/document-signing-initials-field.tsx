@@ -14,7 +14,7 @@
 // each field" requirement. Each field must be manually initialed.
 //
 // This is a fork-local patch — reapply on upstream merges.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { msg } from '@lingui/core/macro';
 import { useLingui } from '@lingui/react';
@@ -93,6 +93,9 @@ export const DocumentSigningInitialsField = ({
   const [pendingAuthOptions, setPendingAuthOptions] = useState<TRecipientActionAuth | undefined>(
     undefined,
   );
+  // In-flight guard — prevents double-submit when users press Enter rapidly
+  // or click Confirm faster than React can disable the button.
+  const isSubmittingRef = useRef(false);
 
   // PATCH: instead of immediately signing with derived initials, open the prompt.
   const onSign = (authOptions?: TRecipientActionAuth) => {
@@ -104,6 +107,8 @@ export const DocumentSigningInitialsField = ({
   const onConfirmInitials = async () => {
     const value = typedInitials.trim();
     if (!value) return;
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
 
     try {
       const payload: TSignFieldWithTokenMutationSchema = {
@@ -139,6 +144,9 @@ export const DocumentSigningInitialsField = ({
           : _(msg`An error occurred while signing the document.`),
         variant: 'destructive',
       });
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      isSubmittingRef.current = false;
     }
   };
 
@@ -213,7 +221,12 @@ export const DocumentSigningInitialsField = ({
               autoFocus
               placeholder={derivedInitialsHint || 'AB'}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && typedInitials.trim()) {
+                if (
+                  e.key === 'Enter' &&
+                  typedInitials.trim() &&
+                  !isLoading &&
+                  !isSubmittingRef.current
+                ) {
                   e.preventDefault();
                   void onConfirmInitials();
                 }
