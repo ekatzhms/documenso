@@ -28,7 +28,12 @@ export const DocumentSigningFieldsUninserted = ({
   return (
     <p
       className={cn(
-        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.4rem,16cqw,0.7rem)] leading-tight duration-200',
+        // Responsive font sizing for the placeholder label:
+        //   - mobile (default): clamp(0.4rem, 18cqw, 0.7rem)    — modest size
+        //   - desktop (md:+):   clamp(0.55rem, 26cqw, 1.1rem)  — larger so the
+        //     placeholder doesn't look tiny in short fields like Initials.
+        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap leading-tight duration-200',
+        'text-[clamp(0.4rem,18cqw,0.7rem)] md:text-[clamp(0.55rem,26cqw,1.1rem)]',
         {
           '!text-center': textAlign === 'center',
           '!text-right': textAlign === 'right',
