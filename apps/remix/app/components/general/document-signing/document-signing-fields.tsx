@@ -28,7 +28,7 @@ export const DocumentSigningFieldsUninserted = ({
   return (
     <p
       className={cn(
-        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+        'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.4rem,16cqw,0.7rem)] leading-tight duration-200',
         {
           '!text-center': textAlign === 'center',
           '!text-right': textAlign === 'right',
@@ -59,7 +59,7 @@ export const DocumentSigningFieldsInserted = ({
     <div className="flex h-full w-full items-center overflow-hidden">
       <p
         className={cn(
-          'text-foreground w-full whitespace-pre-wrap text-left text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+          'text-foreground w-full whitespace-pre-wrap text-left text-[clamp(0.4rem,16cqw,0.7rem)] leading-tight duration-200',
           {
             '!text-center': textAlign === 'center',
             '!text-right': textAlign === 'right',
