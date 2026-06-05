@@ -10,18 +10,28 @@ This document captures all fork-local patches applied to our Documenso installat
 
 ## Goal of these patches
 
-Two groups of fork-local changes:
+Three groups of fork-local changes:
 
-1. **Signer behavior (Patches 1–3).** Force signers to **manually type their initials** for every
+1. **Signer behavior (Patches 1–3, 8).** Force signers to **manually type their initials** for every
    Initials field — no auto-fill from the signer's name, no bulk auto-sign dialog. Compliance /
    signer-intent requirement: auto-typed initials don't satisfy our "actively initialed each field"
-   standard.
-2. **Rendering & operations (Patches 4–6).** Fix Initials field rendering on scaled-down/mobile
-   PDFs (Patch 4), and improve observability: readable timestamps + daily-rotated, level-configurable
-   logs (Patch 5) and timestamped PM2 logs (Patch 6).
+   standard. Patch 8 adds a client-side double-submit guard to that flow.
+2. **Rendering (Patches 4, 9–10).** Fix Initials field rendering on scaled-down/mobile PDFs
+   (Patch 4), re-establish the container-query context lost through the portal (Patch 9), and make
+   placeholder/value font sizing responsive so values fit small mobile fields without clipping
+   (Patch 10).
+3. **Operations & reliability (Patches 5–7).** Improve observability — readable timestamps +
+   daily-rotated, level-configurable logs (Patch 5) and timestamped PM2 logs (Patch 6) — and make
+   `signFieldWithToken` idempotent so client retries on already-inserted fields no longer 5xx (Patch 7).
 
-Patches are independent and can be applied à la carte, except: Patch 2's file content references the
-`textAlign` prop added in Patch 4b — apply 4b if you use the updated Patch 2 file verbatim.
+Patches are mostly independent and can be applied à la carte, with these dependencies:
+- Patch 4c adds a `textAlign` prop to the initials placeholder edited in Patch 2 — apply Patch 2
+  first, and Patch 4b (which adds that prop to `DocumentSigningFieldsUninserted`).
+- Patch 8 layers edits onto the Patch 2 file — apply Patch 2 first.
+- Patch 9 edits the same className string as Patch 4a.
+- Patch 10 edits the same classNames as Patch 4b, and its `cqw` sizing depends on Patch 9's
+  `[container-type:inline-size]` to resolve correctly.
+- Patch 7 (server) and Patch 8 (client) are complementary guards against double-submit; apply both.
 
 ---
 
@@ -53,6 +63,7 @@ tar czf ~/documenso-pre-patch-$(date +%Y%m%d).tar.gz \
   apps/remix/app/components/general/document-signing/document-signing-auto-sign.tsx \
   packages/ui/components/field/field.tsx \
   apps/remix/app/components/general/document-signing/document-signing-fields.tsx \
+  packages/lib/server-only/field/sign-field-with-token.ts \
   packages/lib/utils/logger.ts \
   packages/lib/package.json \
   packages/tsconfig/process-env.d.ts \
@@ -89,24 +100,36 @@ export const AUTO_SIGNABLE_FIELD_TYPES: FieldType[] = [
 
 **File:** `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx`
 
-**Effect:** When the signer clicks an Initials field, a modal opens requiring them to type their initials manually. The signFieldWithToken mutation only fires after confirmation. The signer's derived initials are shown only as a placeholder hint, never as the actual signed value.
+**Effect:** When the signer clicks an Initials field, a modal opens requiring them to type their initials manually. The `signFieldWithToken` mutation only fires after confirmation. The signer's derived initials are shown only as a placeholder hint, never as the actual signed value.
 
-**Replace the entire file with:**
+These are **targeted edits** against the stock v2.11.0 file, not a full replacement, so unrelated upstream changes to this component are preserved. Apply the five edits below in order. (Line numbers will differ on v2.11.0; match on the surrounding code.) Patch 8 then layers a double-submit guard onto this same file, and Patch 4c adds `textAlign` to the placeholder.
+
+### 2a — Add the `useState` import
+
+At the very top of the file, add a header comment and the React import:
 
 ```tsx
+// PATCHED VERSION — forces manual initials entry per field.
+//
+// What changed vs. upstream:
+//   - `onSign` no longer auto-fills with extractInitials(fullName). Instead it
+//     opens a modal that requires the signer to type their initials manually.
+//   - The actual signFieldWithToken call only fires after the signer confirms
+//     the dialog with a non-empty value.
+//   - `extractInitials(fullName)` is kept only as a placeholder hint in the input.
+//
+// Compliance rationale: auto-typed initials don't satisfy our "actively initialed
+// each field" requirement. Each field must be manually initialed.
+//
+// This is a fork-local patch — reapply on upstream merges.
 import { useState } from 'react';
+```
 
-import { DO_NOT_INVALIDATE_QUERY_ON_MUTATION } from '@documenso/lib/constants/trpc';
-import { AppError, AppErrorCode } from '@documenso/lib/errors/app-error';
-import type { TRecipientActionAuth } from '@documenso/lib/types/document-auth';
-import { ZInitialsFieldMeta } from '@documenso/lib/types/field-meta';
-import { extractInitials } from '@documenso/lib/utils/recipient-formatter';
-import type { FieldWithSignature } from '@documenso/prisma/types/field-with-signature';
-import { trpc } from '@documenso/trpc/react';
-import type {
-  TRemovedSignedFieldWithTokenMutationSchema,
-  TSignFieldWithTokenMutationSchema,
-} from '@documenso/trpc/server/field-router/schema';
+### 2b — Add the dialog/input/label/button imports
+
+Alongside the existing `@documenso/ui/primitives/...` imports (e.g. near `use-toast`), add:
+
+```tsx
 import { Button } from '@documenso/ui/primitives/button';
 import {
   Dialog,
@@ -117,53 +140,61 @@ import {
 } from '@documenso/ui/primitives/dialog';
 import { Input } from '@documenso/ui/primitives/input';
 import { Label } from '@documenso/ui/primitives/label';
-import { useToast } from '@documenso/ui/primitives/use-toast';
-import { msg } from '@lingui/core/macro';
-import { useLingui } from '@lingui/react';
-import { Trans } from '@lingui/react/macro';
-import { useRevalidator } from 'react-router';
+```
 
-import { DocumentSigningFieldContainer } from './document-signing-field-container';
-import {
-  DocumentSigningFieldsInserted,
-  DocumentSigningFieldsLoader,
-  DocumentSigningFieldsUninserted,
-} from './document-signing-fields';
-import { useRequiredDocumentSigningContext } from './document-signing-provider';
-import { useDocumentSigningRecipientContext } from './document-signing-recipient-provider';
+Verify all three primitives exist on the target install:
 
-export type DocumentSigningInitialsFieldProps = {
-  field: FieldWithSignature;
-  onSignField?: (value: TSignFieldWithTokenMutationSchema) => Promise<void> | void;
-  onUnsignField?: (value: TRemovedSignedFieldWithTokenMutationSchema) => Promise<void> | void;
-};
+```bash
+ls packages/ui/primitives/ | grep -E "input|label|dialog"
+```
 
-export const DocumentSigningInitialsField = ({
-  field,
-  onSignField,
-  onUnsignField,
-}: DocumentSigningInitialsFieldProps) => {
-  const { toast } = useToast();
-  const { _ } = useLingui();
-  const { revalidate } = useRevalidator();
+### 2c — Keep derived initials as a hint only
 
-  const { fullName } = useRequiredDocumentSigningContext();
-  const { recipient, isAssistantMode } = useDocumentSigningRecipientContext();
+Find:
 
-  // Kept only as a placeholder hint — NOT used as the signed value.
+```tsx
+  const initials = extractInitials(fullName);
+```
+
+Replace with:
+
+```tsx
+  // Kept only as a hint/placeholder — NOT used as the signed value.
   const derivedInitialsHint = extractInitials(fullName);
+```
 
-  const { mutateAsync: signFieldWithToken, isPending: isSignFieldWithTokenLoading } =
-    trpc.field.signFieldWithToken.useMutation(DO_NOT_INVALIDATE_QUERY_ON_MUTATION);
+### 2d — Replace `onSign` with prompt state + a new `onConfirmInitials`
 
-  const { mutateAsync: removeSignedFieldWithToken, isPending: isRemoveSignedFieldWithTokenLoading } =
-    trpc.field.removeSignedFieldWithToken.useMutation(DO_NOT_INVALIDATE_QUERY_ON_MUTATION);
+Find the existing auto-filling handler:
 
-  const isLoading = isSignFieldWithTokenLoading || isRemoveSignedFieldWithTokenLoading;
+```tsx
+  const onSign = async (authOptions?: TRecipientActionAuth) => {
+    try {
+      const value = initials ?? '';
 
-  const safeFieldMeta = ZInitialsFieldMeta.safeParse(field.fieldMeta);
-  const parsedFieldMeta = safeFieldMeta.success ? safeFieldMeta.data : null;
+      const payload: TSignFieldWithTokenMutationSchema = {
+        token: recipient.token,
+        fieldId: field.id,
+        value,
+        isBase64: false,
+        authOptions,
+      };
 
+      if (onSignField) {
+        await onSignField(payload);
+        return;
+      }
+
+      await signFieldWithToken(payload);
+
+      await revalidate();
+    } catch (err) {
+```
+
+Replace it with the prompt state, a state-only `onSign`, and a new `onConfirmInitials` that does the actual signing:
+
+```tsx
+  // Manual-initials prompt state
   const [promptOpen, setPromptOpen] = useState(false);
   const [typedInitials, setTypedInitials] = useState('');
   const [pendingAuthOptions, setPendingAuthOptions] = useState<TRecipientActionAuth | undefined>(
@@ -171,9 +202,9 @@ export const DocumentSigningInitialsField = ({
   );
 
   // PATCH: instead of immediately signing with derived initials, open the prompt.
-  // NOTE: not `async` — it only sets state (no await). Marking it async trips the
-  // `@typescript-eslint/require-await` lint rule that the pre-commit hook enforces.
-  // The `onSign` prop accepts `Promise<void> | void`, so a sync handler is fine.
+  // NOTE: not `async` — it only sets state. Marking it async trips the
+  // `@typescript-eslint/require-await` lint the pre-commit hook enforces; the
+  // `onSign` prop accepts `Promise<void> | void`, so a sync handler is fine.
   const onSign = (authOptions?: TRecipientActionAuth) => {
     setPendingAuthOptions(authOptions);
     setTypedInitials('');
@@ -203,49 +234,15 @@ export const DocumentSigningInitialsField = ({
       setPromptOpen(false);
       setTypedInitials('');
     } catch (err) {
-      const error = AppError.parseError(err);
+```
 
-      if (error.code === AppErrorCode.UNAUTHORIZED) {
-        throw error;
-      }
+> The `catch`/error-handling body that already follows is unchanged. `onRemove` is also unchanged.
 
-      console.error(err);
+### 2e — Wrap the return in a fragment and add the modal
 
-      toast({
-        title: _(msg`Error`),
-        description: isAssistantMode
-          ? _(msg`An error occurred while signing as assistant.`)
-          : _(msg`An error occurred while signing the document.`),
-        variant: 'destructive',
-      });
-    }
-  };
+Find the existing `return (` ... `</DocumentSigningFieldContainer>` ... `);` and wrap it in a fragment, appending the dialog:
 
-  const onRemove = async () => {
-    try {
-      const payload: TRemovedSignedFieldWithTokenMutationSchema = {
-        token: recipient.token,
-        fieldId: field.id,
-      };
-
-      if (onUnsignField) {
-        await onUnsignField(payload);
-        return;
-      }
-
-      await removeSignedFieldWithToken(payload);
-      await revalidate();
-    } catch (err) {
-      console.error(err);
-
-      toast({
-        title: _(msg`Error`),
-        description: _(msg`An error occurred while removing the field.`),
-        variant: 'destructive',
-      });
-    }
-  };
-
+```tsx
   return (
     <>
       <DocumentSigningFieldContainer
@@ -256,11 +253,8 @@ export const DocumentSigningInitialsField = ({
       >
         {isLoading && <DocumentSigningFieldsLoader />}
 
-        {/* PATCH 4: pass textAlign so the empty placeholder centers like the
-            filled value. Requires the textAlign prop added to
-            DocumentSigningFieldsUninserted in Patch 4. */}
         {!field.inserted && (
-          <DocumentSigningFieldsUninserted textAlign={parsedFieldMeta?.textAlign}>
+          <DocumentSigningFieldsUninserted>
             <Trans>Initials</Trans>
           </DocumentSigningFieldsUninserted>
         )}
@@ -327,19 +321,9 @@ export const DocumentSigningInitialsField = ({
       </Dialog>
     </>
   );
-};
 ```
 
-**Imports to verify on the target install:**
-- `@documenso/ui/primitives/dialog`
-- `@documenso/ui/primitives/input`
-- `@documenso/ui/primitives/label`
-
-Quick check:
-```bash
-ls packages/ui/primitives/ | grep -E "input|label|dialog"
-```
-All three must exist.
+**Note:** Patch 1 alone is **not sufficient** to stop initials auto-fill — the per-field click-to-sign path (this file) auto-derives initials independently, which is what these edits address. The placeholder gets a `textAlign` prop in Patch 4c.
 
 ---
 
@@ -484,9 +468,34 @@ export const DocumentSigningFieldsUninserted = ({
 };
 ```
 
-> `cn` is already imported in this file. The initials field then passes
-> `textAlign={parsedFieldMeta?.textAlign}` to the placeholder (already included in Patch 2's
-> file content above).
+> `cn` is already imported in this file.
+
+### 4c — `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx`
+
+Pass the field's `textAlign` through to the placeholder so the empty "Initials" hint centers the
+same way the filled value does. This edits the placeholder added in Patch 2e.
+
+**Before:**
+
+```tsx
+        {!field.inserted && (
+          <DocumentSigningFieldsUninserted>
+            <Trans>Initials</Trans>
+          </DocumentSigningFieldsUninserted>
+        )}
+```
+
+**After:**
+
+```tsx
+        {!field.inserted && (
+          <DocumentSigningFieldsUninserted textAlign={parsedFieldMeta?.textAlign}>
+            <Trans>Initials</Trans>
+          </DocumentSigningFieldsUninserted>
+        )}
+```
+
+> Requires the `textAlign` prop added to `DocumentSigningFieldsUninserted` in Patch 4b.
 
 ---
 
@@ -700,6 +709,230 @@ pm2 save
 
 ---
 
+## Patch 7 — Make `signFieldWithToken` idempotent on already-inserted fields
+
+**File:** `packages/lib/server-only/field/sign-field-with-token.ts`
+
+**Effect:** Previously, signing a field that was already inserted threw
+`Field <id> has already been inserted` (surfacing as a 5xx). This endpoint frequently
+sees client retries (tRPC/SWR retry on transient failures, remounts, navigation), so the
+server now treats an already-inserted field as a successful no-op and returns the existing
+field. Logged at `warn` so pathological retry loops are still visible. This is the
+server-side complement to Patch 8 (client-side double-submit guard).
+
+**Change:** Add the `logger` import alongside the other `../../utils/...` imports:
+
+```ts
+import { logger } from '../../utils/logger';
+```
+
+Then, in the `signFieldWithToken` function, replace the already-inserted guard.
+
+**Before:**
+
+```ts
+  if (field.inserted) {
+    throw new Error(`Field ${fieldId} has already been inserted`);
+  }
+```
+
+**After:**
+
+```ts
+  if (field.inserted) {
+    // Idempotency: treat as a successful no-op rather than a 5xx error.
+    // This endpoint frequently sees client retries (tRPC/SWR retry on transient
+    // failures, remounts, navigation, etc.) — once a field is inserted the work
+    // is done, so returning the existing field is the safe response.
+    // Logged at warn level so we can still spot pathological retry loops.
+    logger.warn(
+      { fieldId, recipientId: recipient.id, type: field.type },
+      `signFieldWithToken called on already-inserted field ${fieldId} — returning existing field (idempotent no-op)`,
+    );
+    return field;
+  }
+```
+
+---
+
+## Patch 8 — Guard the initials field against double-submit
+
+**File:** `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx`
+
+**Effect:** Adds an in-flight `useRef` guard so the manual-initials modal can't fire
+`onConfirmInitials` twice when a signer presses Enter rapidly or clicks Confirm faster than
+React can disable the button. Pairs with Patch 7 on the server. **This builds on Patch 2** —
+apply Patch 2 first, then layer these three edits onto that file.
+
+**Edit 1 — import `useRef`.** Change the React import:
+
+```tsx
+import { useRef, useState } from 'react';
+```
+
+**Edit 2 — declare the guard ref.** After the `pendingAuthOptions` state declaration, add:
+
+```tsx
+  // In-flight guard — prevents double-submit when users press Enter rapidly
+  // or click Confirm faster than React can disable the button.
+  const isSubmittingRef = useRef(false);
+```
+
+**Edit 3 — set/clear the guard inside `onConfirmInitials`.** At the top of the function,
+after the empty-value check, bail out if already submitting and set the flag; clear it in a
+`finally`:
+
+```tsx
+  const onConfirmInitials = async () => {
+    const value = typedInitials.trim();
+    if (!value) return;
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
+    try {
+      // ... existing payload / signFieldWithToken / revalidate logic ...
+    } catch (err) {
+      // ... existing error handling ...
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      isSubmittingRef.current = false;
+    }
+  };
+```
+
+**Edit 4 — also gate the Enter-key handler** on the input. Replace the `onKeyDown` condition:
+
+```tsx
+              onKeyDown={(e) => {
+                if (
+                  e.key === 'Enter' &&
+                  typedInitials.trim() &&
+                  !isLoading &&
+                  !isSubmittingRef.current
+                ) {
+                  e.preventDefault();
+                  void onConfirmInitials();
+                }
+              }}
+```
+
+---
+
+## Patch 9 — Re-establish container-query context on the field box
+
+**File:** `packages/ui/components/field/field.tsx`
+
+**Effect:** Builds on Patch 4a. The `cqw`-based text sizing inside the field (see Patch 10)
+needs a query container to resolve against. The `[container-type:size]` set on the wrapper in
+`DocumentSigningFieldContainer` doesn't survive `FieldContainerPortal`, so `cqw` units were
+resolving against the viewport instead of the field's rendered width. This re-establishes a
+query container directly on the box and clips overflow.
+
+**Change:** In `FieldRootContainer`, add `overflow-hidden` and `[container-type:inline-size]`
+to the box's base `className` string (this is the same string edited in Patch 4a).
+
+**Before** (post-Patch-4a base string):
+
+```tsx
+'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center rounded-[2px] bg-white/90 ring-gray-200 transition-all',
+```
+
+**After:**
+
+```tsx
+// [container-type:inline-size] makes cqw-based text sizing inside the
+// field (e.g. DocumentSigningFieldsInserted) resolve against the field's
+// actual rendered width rather than the viewport. The [container-type:size]
+// on the wrapper in DocumentSigningFieldContainer does not survive the
+// FieldContainerPortal, so we re-establish a query container here.
+'field--FieldRootContainer field-card-container dark-mode-disabled group relative z-20 flex h-full w-full items-center overflow-hidden rounded-[2px] bg-white/90 ring-gray-200 transition-all [container-type:inline-size]',
+```
+
+(Only `overflow-hidden` and `[container-type:inline-size]` are added; the conditional `px`/`ring`
+block from Patch 4a is unchanged.)
+
+---
+
+## Patch 10 — Responsive font sizing for placeholder and inserted field values
+
+**File:** `apps/remix/app/components/general/document-signing/document-signing-fields.tsx`
+
+**Effect:** Builds on Patch 4b. Splits font sizing by viewport so values fit small mobile
+fields without looking tiny on desktop, and stops long inserted values (e.g.
+`06/04/2026 10:18 PM`) from wrapping/clipping on narrow fields. Mobile uses a smaller `clamp`
+cap; desktop (`md:+`) uses a larger one. Inserted values get `whitespace-nowrap` + `overflow-hidden`.
+Requires Patch 9's `[container-type:inline-size]` for the `cqw` units to resolve correctly.
+
+### 10a — `DocumentSigningFieldsUninserted` (placeholder)
+
+Replace the single `text-[clamp(...)]` class (added in Patch 4b) with the responsive pair.
+
+**Before:**
+
+```tsx
+className={cn(
+  'text-foreground group-hover:text-recipient-green whitespace-pre-wrap text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+  {
+    '!text-center': textAlign === 'center',
+    '!text-right': textAlign === 'right',
+  },
+)}
+```
+
+**After:**
+
+```tsx
+className={cn(
+  // Responsive font sizing for the placeholder label:
+  //   - mobile (default): clamp(0.4rem, 18cqw, 0.7rem)    — modest size
+  //   - desktop (md:+):   clamp(0.55rem, 26cqw, 1.1rem)  — larger so the
+  //     placeholder doesn't look tiny in short fields like Initials.
+  'text-foreground group-hover:text-recipient-green whitespace-pre-wrap leading-tight duration-200',
+  'text-[clamp(0.4rem,18cqw,0.7rem)] md:text-[clamp(0.55rem,26cqw,1.1rem)]',
+  {
+    '!text-center': textAlign === 'center',
+    '!text-right': textAlign === 'right',
+  },
+)}
+```
+
+### 10b — `DocumentSigningFieldsInserted` (filled value)
+
+**Before:**
+
+```tsx
+className={cn(
+  'text-foreground w-full whitespace-pre-wrap text-left text-[clamp(0.425rem,25cqw,0.825rem)] duration-200',
+  {
+    '!text-center': textAlign === 'center',
+    '!text-right': textAlign === 'right',
+  },
+)}
+```
+
+**After:**
+
+```tsx
+className={cn(
+  // whitespace-nowrap so values like "06/04/2026 10:18 PM" don't wrap at
+  // a space and get clipped by the field's height on narrow mobile fields.
+  //
+  // Font sizing is split by viewport:
+  //   - mobile (default):  clamp(0.35rem, 12cqw, 0.7rem)  — smaller cap
+  //     so long values still fit horizontally on narrow field widths.
+  //   - desktop (md:+):    clamp(0.5rem,  20cqw, 1rem)    — larger cap
+  //     so short values like initials remain readable on desktop fields.
+  'text-foreground w-full overflow-hidden whitespace-nowrap text-left leading-tight duration-200',
+  'text-[clamp(0.35rem,12cqw,0.6rem)] md:text-[clamp(0.5rem,20cqw,1.1rem)]',
+  {
+    '!text-center': textAlign === 'center',
+    '!text-right': textAlign === 'right',
+  },
+)}
+```
+
+---
+
 ## Deployment
 
 Run from the Documenso install root:
@@ -775,6 +1008,21 @@ Test these flows on the freshly patched install:
    `~/.pm2/logs/documenso-{out,error}.log`) and confirm every line is prefixed with an ISO
    timestamp. `pm2 describe documenso` should show the time option enabled.
 
+9. **Patch 7 verification — idempotent signing**
+   Sign an Initials field, then trigger a re-submit of the same field (e.g. rapid retry or replay the
+   request). The server must return the existing field (HTTP 200), not a 5xx, and emit a `warn` log
+   line `signFieldWithToken called on already-inserted field ...`.
+
+10. **Patch 8 verification — no double-submit**
+    In the manual-initials modal, type initials and press Enter repeatedly / mash Confirm. Only one
+    sign request should fire; the field should sign exactly once with no error toast.
+
+11. **Patches 9–10 verification — responsive sizing on mobile and desktop**
+    Open a document with Initials and a long-value field (e.g. a Date showing `06/04/2026 10:18 PM`).
+    On a phone / narrow view: confirm the value stays on one line and isn't clipped, and text isn't
+    overflowing the field box. On desktop (`md:+`): confirm placeholders and short values are
+    comfortably readable (larger cap) rather than tiny. Check both empty and filled states.
+
 ---
 
 ## Open issues / known gaps
@@ -797,15 +1045,20 @@ These were identified during the original investigation but not yet resolved. Tr
 | Patch | File | Type |
 |-------|------|------|
 | 1 | `packages/lib/constants/autosign.ts` | Full replace |
-| 2 | `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx` | Full replace |
+| 2 | `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx` | Targeted edits (2a–2e) |
 | 3 | `apps/remix/app/components/general/document-signing/document-signing-auto-sign.tsx` | One-line change |
 | 4a | `packages/ui/components/field/field.tsx` | Targeted edit (box className) |
 | 4b | `apps/remix/app/components/general/document-signing/document-signing-fields.tsx` | Targeted edit (add `textAlign` prop) |
+| 4c | `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx` | Targeted edit (pass `textAlign` to placeholder) |
 | 5a | `packages/lib/package.json` | Add `pino-roll` dependency |
 | 5b | `packages/lib/utils/logger.ts` | Full replace |
 | 5c | `packages/tsconfig/process-env.d.ts` | Add one env type |
 | 5d | `.env.example` | Update `[[LOGGER]]` block |
 | 6 | `ecosystem.config.js` | New file (repo root) |
+| 7 | `packages/lib/server-only/field/sign-field-with-token.ts` | Add import + replace inserted-field guard |
+| 8 | `apps/remix/app/components/general/document-signing/document-signing-initials-field.tsx` | Targeted edits (layers on Patch 2) |
+| 9 | `packages/ui/components/field/field.tsx` | Targeted edit (same className as Patch 4a) |
+| 10 | `apps/remix/app/components/general/document-signing/document-signing-fields.tsx` | Targeted edits (same classNames as Patch 4b) |
 
 ---
 
@@ -827,6 +1080,7 @@ git checkout HEAD -- packages/lib/constants/autosign.ts \
   apps/remix/app/components/general/document-signing/document-signing-auto-sign.tsx \
   packages/ui/components/field/field.tsx \
   apps/remix/app/components/general/document-signing/document-signing-fields.tsx \
+  packages/lib/server-only/field/sign-field-with-token.ts \
   packages/lib/utils/logger.ts \
   packages/lib/package.json \
   packages/tsconfig/process-env.d.ts \
